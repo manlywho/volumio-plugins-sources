@@ -11,6 +11,20 @@ var sleep = require('sleep');
 var socket = io.connect("http://localhost:3000");
 var execSync = require('child_process').execSync;
 
+// Define LED strip configuration
+var NUM_LEDS = 24; // Number of LEDs in your strip
+var DATA_PIN = 18; // GPIO pin connected to the data line of your LED strip
+var pixelData = new Uint32Array(NUM_LEDS);
+
+// Initialize the LED strip
+ws281x.init(NUM_LEDS, { dmaNum: 10, freq: 800000, gpioPin: DATA_PIN });
+
+// Function to set LED colors
+function setPixelColor(index, color) {
+    pixelData[index] = color;
+    ws281x.render(pixelData);
+}
+
 // Event string consts
 const SYSTEM_STARTUP = "systemStartup";
 const SYSTEM_SHUTDOWN = "systemShutdown";
@@ -92,6 +106,10 @@ GPIOControl.prototype.onStart = function() {
 GPIOControl.prototype.onStop = function() {
 	var self = this;
 	var defer = libQ.defer();
+
+	// Cleanup and turn off all LEDs when the plugin stops
+ws281x.reset();
+
 
 	self.clearGPIOs()
 		.then (function(result) {
@@ -339,45 +357,38 @@ GPIOControl.prototype.statusChanged = function(state) {
 
 // An event has happened so do something about it
 GPIOControl.prototype.handleEvent = function(e) {
-	var self = this;
+    var self = this;
 
-	self.GPIOs.forEach(function(gpio) {
-		if (gpio.e == e){
+    self.GPIOs.forEach(function(gpio) {
+        if (gpio.e == e) {
+            // Clear any previous timers
+            clearTimeout(gpio.delayTimeoutId);
+            clearTimeout(gpio.durationTimeoutId);
 
-			// Clear any previous timers
-			clearTimeout(gpio.delayTimeoutId);
-			clearTimeout(gpio.durationTimeoutId);
+            self.log(`*** ${e} ***`);
+            self.log(`Delaying: ${gpio.delay}ms`);
 
-			self.log(`*** ${e} ***`);
-			self.log(`Delaying: ${gpio.delay}ms`);
+            // Create a delay to control LED
+            gpio.delayTimeoutId = setTimeout(function() {
+                if (e == MUSIC_PLAY) {
+                    // Song is playing, set LED color to green
+                    setPixelColor(0, 0x00FF00); // Green
+                } else if (e == MUSIC_PAUSE) {
+                    // Song is paused, set LED color to yellow
+                    setPixelColor(0, 0xFFFF00); // Yellow
+                } else {
+                    // Handle other events as needed
+                }
+            }, gpio.delay);
 
-			// Create a delay to writing to GPIO
-			gpio.delayTimeoutId = setTimeout(function() {
-
-				self.log(`Turning GPIO ${gpio.pin} ${self.boolToString(gpio.state)} (${e})`);
-
-				gpio.writeSync(gpio.state);
-
-				// If a duration has been specified then write to GPIO after specified duration
-				if (gpio.duration > 0){
-
-					self.log(`Delaying: ${gpio.duration}ms`);
-
-					// Create timeout to pull GPIO
-					gpio.durationTimeoutId = setTimeout(function() {
-						self.log(`Turning GPIO ${gpio.pin} ${self.boolToString(!gpio.state)} (${e})`);
-						gpio.writeSync(!gpio.state);
-					}, gpio.duration);
-				}
-			}, gpio.delay);
-
-			// Shutdown after a short wait
-			if (e == SYSTEM_SHUTDOWN){
-				sleep.sleep(5);
-			}
-		}
-	});
+            // Shutdown after a short wait
+            if (e == SYSTEM_SHUTDOWN) {
+                sleep.sleep(5);
+            }
+        }
+    });
 }
+
 
 
 // Output to log
